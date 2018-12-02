@@ -31,9 +31,24 @@ namespace Trace
             public KnownString[] KnownStrings;
         }
 
+        private struct VocabularyItem
+        {
+            public List<Levenshtein.String<int>> Strings { get; private set; }
+
+            public VocabularyItem(List<Levenshtein.String<int>> strings)
+            {
+                this.Strings = strings;
+            }
+
+            public void Add(Levenshtein.String<int> str)
+            {
+                this.Strings.Add(str);
+            }
+        }
+
         private readonly Vector3[] vectorsAlphabet;
         private Levenshtein.Alphabet<int> levenshteinAlphabet;
-        private Dictionary<string, List<Levenshtein.String<int>>> knownStrings;
+        private Dictionary<string, VocabularyItem> knownStrings;
 
         public static TrajectoryVocabulary Load(string serializationLocation)
         {
@@ -52,7 +67,7 @@ namespace Trace
         {
             this.vectorsAlphabet = Utils.GenerateAlphabet(fixedValues: Vector3.forward);
             this.levenshteinAlphabet = CreateLevenshteinAlphabet(this.vectorsAlphabet);
-            this.knownStrings = new Dictionary<string, List<Levenshtein.String<int>>>();
+            this.knownStrings = new Dictionary<string, VocabularyItem>();
         }
 
         private TrajectoryVocabulary(Serialization serialization)
@@ -60,7 +75,7 @@ namespace Trace
             this.vectorsAlphabet = serialization.Alphabet;
             this.levenshteinAlphabet = CreateLevenshteinAlphabet(this.vectorsAlphabet);
 
-            this.knownStrings = new Dictionary<string, List<Levenshtein.String<int>>>();
+            this.knownStrings = new Dictionary<string, VocabularyItem>();
             foreach (var knownString in serialization.KnownStrings)
             {
                 var strings = new List<Levenshtein.String<int>>();
@@ -69,7 +84,7 @@ namespace Trace
                     strings.Add(new Levenshtein.String<int>(s.Ints, this.levenshteinAlphabet));
                 }
 
-                this.knownStrings.Add(knownString.Name, strings);
+                this.knownStrings.Add(knownString.Name, new VocabularyItem(strings));
             }
         }
 
@@ -92,7 +107,7 @@ namespace Trace
                     pair => new Serialization.KnownString()
                     {
                         Name = pair.Key,
-                        Strings = pair.Value.Select(
+                        Strings = pair.Value.Strings.Select(
                             str => new Serialization.KnownString.IntArray() { Ints = str.Characters }).ToArray()
                     }).ToArray()
             };
@@ -104,7 +119,7 @@ namespace Trace
         {
             if (!this.knownStrings.ContainsKey(name))
             {
-                this.knownStrings.Add(name, new List<Levenshtein.String<int>>());
+                this.knownStrings.Add(name, new VocabularyItem(new List<Levenshtein.String<int>>()));
             }
 
             this.knownStrings[name].Add(ToLevenshteinString(trajectory));
@@ -121,7 +136,7 @@ namespace Trace
 
             foreach (var pair in this.knownStrings)
             {
-                float cost = GetGroupMatchCost(trajectoryString, pair.Value);
+                float cost = GetGroupMatchCost(trajectoryString, pair.Value.Strings);
                 if (cost < bestCost)
                 {
                     result = pair.Key;
