@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using UnityEngine;
 
@@ -11,58 +12,92 @@ namespace Trace
         private const float MAXIMUM_ALLOWABLE_MATCH_COST = 4f;
 
         [Serializable]
-        private class TrajectoryVocabularySerialization
+        private class Serialization
         {
+            [Serializable]
+            public class KnownString
+            {
+                [Serializable]
+                public class IntArray
+                {
+                    public int[] Ints;
+                }
+
+                public string Name;
+                public IntArray[] Strings;
+            }
+
             public Vector3[] Alphabet;
-            public Dictionary<string, int[][]> KnownStrings;
+            public KnownString[] KnownStrings;
         }
 
         private readonly Vector3[] vectorsAlphabet;
         private Levenshtein.Alphabet<int> levenshteinAlphabet;
         private Dictionary<string, List<Levenshtein.String<int>>> knownStrings;
 
-        public TrajectoryVocabulary()
+        public static TrajectoryVocabulary Load(string serializationLocation)
         {
-            this.vectorsAlphabet = Utils.GenerateAlphabet();
+            if (File.Exists(serializationLocation))
+            {
+                string json = File.ReadAllText(serializationLocation);
+                return new TrajectoryVocabulary(JsonUtility.FromJson<Serialization>(json));
+            }
+            else
+            {
+                return new TrajectoryVocabulary();
+            }
+        }
+
+        private TrajectoryVocabulary()
+        {
+            this.vectorsAlphabet = Utils.GenerateAlphabet(fixedValues: Vector3.forward);
             this.levenshteinAlphabet = CreateLevenshteinAlphabet(this.vectorsAlphabet);
             this.knownStrings = new Dictionary<string, List<Levenshtein.String<int>>>();
         }
 
-        public TrajectoryVocabulary(string json) 
-            : this(JsonUtility.FromJson<TrajectoryVocabularySerialization>(json))
-        { }
-
-        private TrajectoryVocabulary(TrajectoryVocabularySerialization serialization)
+        private TrajectoryVocabulary(Serialization serialization)
         {
             this.vectorsAlphabet = serialization.Alphabet;
             this.levenshteinAlphabet = CreateLevenshteinAlphabet(this.vectorsAlphabet);
 
             this.knownStrings = new Dictionary<string, List<Levenshtein.String<int>>>();
-            foreach (var pair in serialization.KnownStrings)
+            foreach (var knownString in serialization.KnownStrings)
             {
                 var strings = new List<Levenshtein.String<int>>();
-                foreach (var s in pair.Value)
+                foreach (var s in knownString.Strings)
                 {
-                    strings.Add(new Levenshtein.String<int>(s, this.levenshteinAlphabet));
+                    strings.Add(new Levenshtein.String<int>(s.Ints, this.levenshteinAlphabet));
                 }
 
-                this.knownStrings.Add(pair.Key, strings);
+                this.knownStrings.Add(knownString.Name, strings);
             }
+        }
+
+        public void Save(string serializationLocation)
+        {
+            if (File.Exists(serializationLocation))
+            {
+                File.Delete(serializationLocation);
+            }
+
+            File.WriteAllText(serializationLocation, this.ToString());
         }
 
         public override string ToString()
         {
-            var serialization = new TrajectoryVocabularySerialization()
+            var serialization = new Serialization()
             {
                 Alphabet = this.vectorsAlphabet,
-                KnownStrings = this.knownStrings.ToDictionary(pair => pair.Key,
-                pair =>
-                {
-                    return pair.Value.Select(str => str.Characters).ToArray();
-                })
+                KnownStrings = this.knownStrings.Select(
+                    pair => new Serialization.KnownString()
+                    {
+                        Name = pair.Key,
+                        Strings = pair.Value.Select(
+                            str => new Serialization.KnownString.IntArray() { Ints = str.Characters }).ToArray()
+                    }).ToArray()
             };
 
-            return JsonUtility.ToJson(serialization);
+            return JsonUtility.ToJson(serialization, true /* TODO DEBUG */);
         }
 
         public void AddTrajectoryWithName(Trajectory trajectory, string name)
@@ -93,9 +128,7 @@ namespace Trace
                     bestCost = cost;
                 }
             }
-
-            Debug.Log("Cost: " + bestCost);
-
+            
             return result != null;
         }
 
@@ -121,12 +154,33 @@ namespace Trace
         }
 
         // TODO: Create substantially less hackneyed distance functions.  Optimizer?
-        private static Levenshtein.Alphabet<int> CreateLevenshteinAlphabet(Vector3[] vectors)
+        // TODO: This is a bug factory in the making.  The way this method is written
+        // makes some pretty scary unenforced assumptions about the relationship between
+        // the characters and their indices within the Levenshtein alphabet, deeply
+        // abusing the fact that they are one and the same.  While that is currently the
+        // case and really is determined within this function, changing it will likely
+        // cause the algorithm to go haywire in extremely unpredictable ways.  Once the
+        // approach is validated, look for ways to make this implementation slightly 
+        // less terrifying.
+        private static Levenshtein.Alphabet<int> CreateLevenshteinAlphabet(Vector3[] vectors, params int[][] knownStrings)
         {
+            const float DEFAULT_EXPECTED_COUNT_PER_STRING = 1f;
+
+            var counts = Enumerable.Repeat(0f, vectors.Length).ToArray();
+            foreach (var str in knownStrings)
+            {
+                foreach (var idx in str)
+                {
+                    counts[idx]++;
+                }
+            }
+            var expectedCountPerString = counts.Select(
+                count => count > 0 ? count / knownStrings.Length : DEFAULT_EXPECTED_COUNT_PER_STRING).ToArray();
+
             return new Levenshtein.Alphabet<int>(
                 Enumerable.Range(0, vectors.Length).ToArray(),
-                idx => 1f,
-                idx => 1f,
+                idx => 1f / expectedCountPerString[idx],
+                idx => 1f / expectedCountPerString[idx],
                 (a, b) => 1f - Vector3.Dot(vectors[a], vectors[b]));
         }
 

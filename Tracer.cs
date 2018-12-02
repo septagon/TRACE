@@ -1,15 +1,23 @@
 ﻿using System;
+using System.IO;
 using UnityEngine;
 
 namespace Trace
 {
     public class Tracer
     {
-        private int newTrajectories = 0;
-
-        public event Action<string> OnTraceRecognized = _ => { };
+        public event Action<Trajectory, string> OnTraceRecognized = (_, __) => { };
+        public event Action<Trajectory> OnTraceNotRecognized = _ => { };
 
         private TrajectoryVocabulary vocabulary;
+        private readonly string VOCABULARY_FILE_NAME = "trace_vocabulary.json";
+        private string VocabularyFile
+        {
+            get
+            {
+                return Path.Combine(Application.dataPath, VOCABULARY_FILE_NAME);
+            }
+        }
 
         public abstract class BaseTraceCreator : IDisposable
         {
@@ -43,7 +51,7 @@ namespace Trace
 
         public Tracer()
         {
-            this.vocabulary = new TrajectoryVocabulary();
+            this.vocabulary = TrajectoryVocabulary.Load(this.VocabularyFile);
         }
 
         public BaseTraceCreator GetTraceCreator()
@@ -51,20 +59,26 @@ namespace Trace
             return new TraceCreator(this);
         }
 
-        public void TrajectoryCreationHandler(Trajectory trajectory)
+        public void AddTrajectoryWithName(Trajectory trajectory, string name)
+        {
+            this.vocabulary.AddTrajectoryWithName(trajectory, name);
+        }
+
+        public void Save()
+        {
+            this.vocabulary.Save(this.VocabularyFile);
+        }
+
+        private void TrajectoryCreationHandler(Trajectory trajectory)
         {
             string recognized;
             if (this.vocabulary.TryRecognizeTrajectory(trajectory, out recognized))
             {
-                OnTraceRecognized(recognized);
-
-                // TODO: Hack.
-                this.vocabulary.AddTrajectoryWithName(trajectory, recognized);
+                OnTraceRecognized(trajectory, recognized);
             }
             else
             {
-                // TODO: Do something if and only if the mode is right.
-                this.vocabulary.AddTrajectoryWithName(trajectory, "" + this.newTrajectories++);
+                OnTraceNotRecognized(trajectory);
             }
         }
     }
