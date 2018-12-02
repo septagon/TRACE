@@ -149,7 +149,7 @@ namespace Trace
                     }).ToArray()
             };
 
-            return JsonUtility.ToJson(serialization, true /* TODO DEBUG */);
+            return JsonUtility.ToJson(serialization);
         }
 
         public void AddTrajectoryWithName(Trajectory trajectory, string name)
