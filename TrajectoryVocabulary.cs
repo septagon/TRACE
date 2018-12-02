@@ -31,18 +31,55 @@ namespace Trace
             public KnownString[] KnownStrings;
         }
 
-        private struct VocabularyItem
+        private class VocabularyItem
         {
+            private const float DEFAULT_AVERAGE_LEVENSHTEIN_DISTANCE = 1f;
+
             public List<Levenshtein.String<int>> Strings { get; private set; }
+
+            private int centroidIdx;
+            private float averageLevenshteinDistance;
 
             public VocabularyItem(List<Levenshtein.String<int>> strings)
             {
                 this.Strings = strings;
+                this.centroidIdx = -1;
+                this.averageLevenshteinDistance = -1f;
+
+                if (strings.Count > 0)
+                {
+                    RecalculateRepresentations(this.Strings);
+                }
             }
 
             public void Add(Levenshtein.String<int> str)
             {
                 this.Strings.Add(str);
+                this.RecalculateRepresentations(this.Strings);
+            }
+
+            public float GetMatchCost(Levenshtein.String<int> str)
+            {
+                float distance = str.Distance(this.Strings[this.centroidIdx]);
+                return distance / this.averageLevenshteinDistance; // Linear error metric, for now.
+            }
+
+            private void RecalculateRepresentations(List<Levenshtein.String<int>> strings)
+            {
+                var distances = strings.Select(a => strings.Sum(b => a.Distance(b))).ToList();
+                this.centroidIdx = distances.IndexOf(distances.Min());
+
+                if (strings.Count > 1)
+                {
+                    // Local variable for lambda capture.
+                    int idx = this.centroidIdx;
+                    float totalDistance = strings.Sum(str => str.Distance(strings[idx]));
+                    this.averageLevenshteinDistance = totalDistance / (strings.Count - 1);
+                }
+                else
+                {
+                    this.averageLevenshteinDistance = DEFAULT_AVERAGE_LEVENSHTEIN_DISTANCE;
+                }
             }
         }
 
@@ -136,7 +173,7 @@ namespace Trace
 
             foreach (var pair in this.knownStrings)
             {
-                float cost = GetGroupMatchCost(trajectoryString, pair.Value.Strings);
+                float cost = pair.Value.GetMatchCost(trajectoryString);
                 if (cost < bestCost)
                 {
                     result = pair.Key;
@@ -197,12 +234,6 @@ namespace Trace
                 idx => 1f / expectedCountPerString[idx],
                 idx => 1f / expectedCountPerString[idx],
                 (a, b) => 1f - Vector3.Dot(vectors[a], vectors[b]));
-        }
-
-        private static float GetGroupMatchCost<T>(Levenshtein.String<T> str, List<Levenshtein.String<T>> group)
-        {
-            // TODO: Something less ham-handed than this.
-            return group.Average(g => g.Distance(str));
         }
     }
 }
