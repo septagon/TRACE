@@ -8,57 +8,72 @@ namespace Trace
 {
     public class TrajectoryVocabulary
     {
-        private const int FINEST_LEVEL_DESCRIPTOR_RESOLUTION = 64;
+        private const int FINEST_LEVEL_DESCRIPTOR_RESOLUTION = 32;
         private const float MAXIMUM_ALLOWABLE_MATCH_COST = 4f;
 
         [Serializable]
         private class Serialization
         {
             [Serializable]
-            public class KnownString
+            public class KnownTrajectory
             {
                 [Serializable]
-                public class IntArray
+                public class Descriptor
                 {
-                    public int[] Ints;
+                    [Serializable]
+                    public class IntArray
+                    {
+                        public int[] Ints;
+                    }
+
+                    public IntArray[] Strings;
                 }
 
                 public string Name;
-                public IntArray[] Strings;
+                public Descriptor[] Descriptors;
             }
 
             public Vector3[] Alphabet;
-            public KnownString[] KnownStrings;
+            public KnownTrajectory[] KnownTrajectories;
         }
 
         private class TrajectoryDescriptor
         {
-            public Levenshtein.String<int> String { get; private set; }
+            public List<Levenshtein.String<int>> Strings { get; private set; }
 
-            public TrajectoryDescriptor(int[] ints, Levenshtein.Alphabet<int> alphabet)
+            public TrajectoryDescriptor(List<List<int>> descriptor, Levenshtein.Alphabet<int> alphabet)
             {
-                this.String = new Levenshtein.String<int>(ints, alphabet);
+                this.Strings = descriptor.Select(ints => new Levenshtein.String<int>(ints.ToArray(), alphabet)).ToList();
             }
 
             public TrajectoryDescriptor(Trajectory trajectory, Vector3[] tokens, Levenshtein.Alphabet<int> alphabet) 
                 : this(GetTrajectoryDescriptor(trajectory, tokens, FINEST_LEVEL_DESCRIPTOR_RESOLUTION), alphabet)
             { }
 
-            private static int[] GetTrajectoryDescriptor(Trajectory trajectory, Vector3[] tokens, int targetResolution)
+            private static List<List<int>> GetTrajectoryDescriptor(Trajectory trajectory, Vector3[] tokens, int targetResolution)
             {
-                var descriptor = new List<int>();
+                var descriptor = new List<List<int>>();
 
                 for (int res = targetResolution; res > 2; res /= 2)
                 {
-                    descriptor.AddRange(trajectory.ResampleAtTargetResolution(res).Tokenize(tokens));
+                    descriptor.Add(trajectory.ResampleAtTargetResolution(res).Tokenize(tokens));
                 }
 
-                return descriptor.ToArray();
+                return descriptor;
             }
 
             public float Distance(TrajectoryDescriptor other)
             {
-                return this.String.Distance(other.String);
+                Debug.Assert(this.Strings.Count == other.Strings.Count);
+
+                float totalDistance = 0;
+                for (int idx = 0; idx < this.Strings.Count; idx++)
+                {
+                    float weight = Mathf.Pow(2f, idx);
+                    totalDistance += this.Strings[idx].Distance(other.Strings[idx]);
+                }
+
+                return totalDistance;
             }
         }
 
@@ -144,15 +159,16 @@ namespace Trace
             this.levenshteinAlphabet = CreateLevenshteinAlphabet(this.vectorsAlphabet);
 
             this.knownStrings = new Dictionary<string, VocabularyItem>();
-            foreach (var knownString in serialization.KnownStrings)
+            foreach (var knownGlyph in serialization.KnownTrajectories)
             {
                 var strings = new List<TrajectoryDescriptor>();
-                foreach (var s in knownString.Strings)
+                foreach (var desc in knownGlyph.Descriptors)
                 {
-                    strings.Add(new TrajectoryDescriptor(s.Ints, this.levenshteinAlphabet));
+                    var jaggedArray = desc.Strings.Select(ints => ints.Ints.ToList()).ToList();
+                    strings.Add(new TrajectoryDescriptor(jaggedArray, this.levenshteinAlphabet));
                 }
 
-                this.knownStrings.Add(knownString.Name, new VocabularyItem(strings));
+                this.knownStrings.Add(knownGlyph.Name, new VocabularyItem(strings));
             }
         }
 
@@ -171,12 +187,21 @@ namespace Trace
             var serialization = new Serialization()
             {
                 Alphabet = this.vectorsAlphabet,
-                KnownStrings = this.knownStrings.Select(
-                    pair => new Serialization.KnownString()
+                KnownTrajectories = this.knownStrings.Select(
+                    pair => new Serialization.KnownTrajectory()
                     {
                         Name = pair.Key,
-                        Strings = pair.Value.Descriptors.Select(
-                            desc => new Serialization.KnownString.IntArray() { Ints = desc.String.Characters }).ToArray()
+                        Descriptors = pair.Value.Descriptors.Select(
+                            desc => new Serialization.KnownTrajectory.Descriptor()
+                            {
+                                Strings = desc.Strings.Select(str =>
+                                {
+                                    return new Serialization.KnownTrajectory.Descriptor.IntArray()
+                                    {
+                                        Ints = str.Characters
+                                    };
+                                }).ToArray()
+                            }).ToArray()
                     }).ToArray()
             };
 
