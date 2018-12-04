@@ -31,40 +31,71 @@ namespace Trace
             public KnownString[] KnownStrings;
         }
 
+        private class TrajectoryDescriptor
+        {
+            public Levenshtein.String<int> String { get; private set; }
+
+            public TrajectoryDescriptor(int[] ints, Levenshtein.Alphabet<int> alphabet)
+            {
+                this.String = new Levenshtein.String<int>(ints, alphabet);
+            }
+
+            public TrajectoryDescriptor(Trajectory trajectory, Vector3[] tokens, Levenshtein.Alphabet<int> alphabet) 
+                : this(GetTrajectoryDescriptor(trajectory, tokens, FINEST_LEVEL_DESCRIPTOR_RESOLUTION), alphabet)
+            { }
+
+            private static int[] GetTrajectoryDescriptor(Trajectory trajectory, Vector3[] tokens, int targetResolution)
+            {
+                var descriptor = new List<int>();
+
+                for (int res = targetResolution; res > 2; res /= 2)
+                {
+                    descriptor.AddRange(trajectory.ResampleAtTargetResolution(res).Tokenize(tokens));
+                }
+
+                return descriptor.ToArray();
+            }
+
+            public float Distance(TrajectoryDescriptor other)
+            {
+                return this.String.Distance(other.String);
+            }
+        }
+
         private class VocabularyItem
         {
-            private const float DEFAULT_AVERAGE_LEVENSHTEIN_DISTANCE = 1f;
+            private const float DEFAULT_AVERAGE_COST = 1f;
 
-            public List<Levenshtein.String<int>> Strings { get; private set; }
+            public List<TrajectoryDescriptor> Descriptors { get; private set; }
 
             private int centroidIdx;
             private float averageLevenshteinDistance;
 
-            public VocabularyItem(List<Levenshtein.String<int>> strings)
+            public VocabularyItem(List<TrajectoryDescriptor> strings)
             {
-                this.Strings = strings;
+                this.Descriptors = strings;
                 this.centroidIdx = -1;
                 this.averageLevenshteinDistance = -1f;
 
                 if (strings.Count > 0)
                 {
-                    RecalculateRepresentations(this.Strings);
+                    RecalculateRepresentations(this.Descriptors);
                 }
             }
 
-            public void Add(Levenshtein.String<int> str)
+            public void Add(TrajectoryDescriptor descriptor)
             {
-                this.Strings.Add(str);
-                this.RecalculateRepresentations(this.Strings);
+                this.Descriptors.Add(descriptor);
+                this.RecalculateRepresentations(this.Descriptors);
             }
 
-            public float GetMatchCost(Levenshtein.String<int> str)
+            public float GetMatchCost(TrajectoryDescriptor descriptor)
             {
-                float distance = str.Distance(this.Strings[this.centroidIdx]);
-                return distance / this.averageLevenshteinDistance; // Linear error metric, for now.
+                float cost = descriptor.Distance(this.Descriptors[this.centroidIdx]);
+                return cost / this.averageLevenshteinDistance; // Linear error metric, for now.
             }
 
-            private void RecalculateRepresentations(List<Levenshtein.String<int>> strings)
+            private void RecalculateRepresentations(List<TrajectoryDescriptor> strings)
             {
                 var distances = strings.Select(a => strings.Sum(b => a.Distance(b))).ToList();
                 this.centroidIdx = distances.IndexOf(distances.Min());
@@ -78,7 +109,7 @@ namespace Trace
                 }
                 else
                 {
-                    this.averageLevenshteinDistance = DEFAULT_AVERAGE_LEVENSHTEIN_DISTANCE;
+                    this.averageLevenshteinDistance = DEFAULT_AVERAGE_COST;
                 }
             }
         }
@@ -115,10 +146,10 @@ namespace Trace
             this.knownStrings = new Dictionary<string, VocabularyItem>();
             foreach (var knownString in serialization.KnownStrings)
             {
-                var strings = new List<Levenshtein.String<int>>();
+                var strings = new List<TrajectoryDescriptor>();
                 foreach (var s in knownString.Strings)
                 {
-                    strings.Add(new Levenshtein.String<int>(s.Ints, this.levenshteinAlphabet));
+                    strings.Add(new TrajectoryDescriptor(s.Ints, this.levenshteinAlphabet));
                 }
 
                 this.knownStrings.Add(knownString.Name, new VocabularyItem(strings));
@@ -144,8 +175,8 @@ namespace Trace
                     pair => new Serialization.KnownString()
                     {
                         Name = pair.Key,
-                        Strings = pair.Value.Strings.Select(
-                            str => new Serialization.KnownString.IntArray() { Ints = str.Characters }).ToArray()
+                        Strings = pair.Value.Descriptors.Select(
+                            desc => new Serialization.KnownString.IntArray() { Ints = desc.String.Characters }).ToArray()
                     }).ToArray()
             };
 
@@ -156,24 +187,24 @@ namespace Trace
         {
             if (!this.knownStrings.ContainsKey(name))
             {
-                this.knownStrings.Add(name, new VocabularyItem(new List<Levenshtein.String<int>>()));
+                this.knownStrings.Add(name, new VocabularyItem(new List<TrajectoryDescriptor>()));
             }
 
-            this.knownStrings[name].Add(ToLevenshteinString(trajectory));
+            this.knownStrings[name].Add(new TrajectoryDescriptor(trajectory, this.vectorsAlphabet, this.levenshteinAlphabet));
         }
 
         // TODO: I really hate this pattern.  Find a way to accomplish this without
         // either using obnoxious patterns or opening the door for confusing usage.
         public bool TryRecognizeTrajectory(Trajectory trajectory, out string result)
         {
-            var trajectoryString = ToLevenshteinString(trajectory);
+            var descriptor = new TrajectoryDescriptor(trajectory, this.vectorsAlphabet, this.levenshteinAlphabet);
 
             result = null;
             float bestCost = MAXIMUM_ALLOWABLE_MATCH_COST;
 
             foreach (var pair in this.knownStrings)
             {
-                float cost = pair.Value.GetMatchCost(trajectoryString);
+                float cost = pair.Value.GetMatchCost(descriptor);
                 if (cost < bestCost)
                 {
                     result = pair.Key;
@@ -182,27 +213,6 @@ namespace Trace
             }
             
             return result != null;
-        }
-
-        private Levenshtein.String<int> ToLevenshteinString(Trajectory trajectory)
-        {
-            var trajectoryDescriptor = GetTrajectoryDescriptor(
-                trajectory,
-                this.vectorsAlphabet,
-                FINEST_LEVEL_DESCRIPTOR_RESOLUTION);
-            return new Levenshtein.String<int>(trajectoryDescriptor, this.levenshteinAlphabet);
-        }
-        
-        private static int[] GetTrajectoryDescriptor(Trajectory trajectory, Vector3[] tokens, int targetResolution)
-        {
-            var descriptor = new List<int>();
-
-            for (int res = targetResolution; res > 2; res /= 2)
-            {
-                descriptor.AddRange(trajectory.ResampleAtTargetResolution(res).Tokenize(tokens));
-            }
-
-            return descriptor.ToArray();
         }
 
         // TODO: Create substantially less hackneyed distance functions.  Optimizer?
