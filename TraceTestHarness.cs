@@ -65,6 +65,36 @@ public class TraceTestHarness : MonoBehaviour
     private void OnTraceRecognizedHandler(Trajectory trajectory, string recognized)
     {
         this.tmp.text = recognized;
+
+        // Holy CRAP that's way more fun than it should be.  I think I have something here.
+        if (recognized == "fireball")
+        {
+            Vector3 throwDir = Vector3.zero;
+            Vector3? prior = null;
+            float multiplier = 1f;
+            foreach (var v in trajectory)
+            {
+                if (prior.HasValue)
+                {
+                    throwDir += multiplier++ * (v - prior.Value);
+                }
+                prior = v;
+            }
+            throwDir.Normalize();
+
+            // Aim assist-ish thing.
+            var lookDir = this.head.forward;
+            float t = Mathf.Min(1f, Mathf.Pow(1f - Vector3.Dot(throwDir, lookDir), 2f));
+            var dir = t * throwDir + (1f - t) * lookDir;
+
+            var go = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            go.transform.position = this.hand.position + 0.1f * dir;
+            go.transform.localScale *= 0.1f;
+            go.GetComponent<MeshRenderer>().material.color = Color.red;
+            var rigidbody = go.AddComponent<Rigidbody>();
+            rigidbody.useGravity = false;
+            rigidbody.AddForce(dir * 1000f);
+        }
     }
 
     private int idx = 0;

@@ -104,10 +104,16 @@ namespace Trace
                 this.RecalculateRepresentations(this.Descriptors);
             }
 
+            // TODO: Try best match score?  Sum of squared distances?
             public float GetMatchCost(TrajectoryDescriptor descriptor)
             {
                 float cost = descriptor.Distance(this.Descriptors[this.centroidIdx]);
                 return cost / this.averageLevenshteinDistance; // Linear error metric, for now.
+            }
+
+            public float GetMatchMinimumEditDistance(TrajectoryDescriptor descriptor)
+            {
+                return this.Descriptors.Min(desc => desc.Distance(descriptor));
             }
 
             private void RecalculateRepresentations(List<TrajectoryDescriptor> strings)
@@ -223,21 +229,27 @@ namespace Trace
         public bool TryRecognizeTrajectory(Trajectory trajectory, out string result)
         {
             var descriptor = new TrajectoryDescriptor(trajectory, this.vectorsAlphabet, this.levenshteinAlphabet);
-
             result = null;
-            float bestCost = MAXIMUM_ALLOWABLE_MATCH_COST;
 
-            foreach (var pair in this.knownStrings)
+            var allowableMatches = this.knownStrings.Where(pair => pair.Value.GetMatchCost(descriptor) < MAXIMUM_ALLOWABLE_MATCH_COST);
+            if (allowableMatches.Count() == 0)
             {
-                float cost = pair.Value.GetMatchCost(descriptor);
-                if (cost < bestCost)
-                {
-                    result = pair.Key;
-                    bestCost = cost;
-                }
+                return false;
             }
-            
-            return result != null;
+            else
+            {
+                float bestDistance = float.MaxValue;
+                foreach (var pair in allowableMatches)
+                {
+                    float distance = pair.Value.GetMatchMinimumEditDistance(descriptor);
+                    if (distance < bestDistance)
+                    {
+                        result = pair.Key;
+                        bestDistance = distance;
+                    }
+                }
+                return result != null;
+            }
         }
 
         // TODO: Create substantially less hackneyed distance functions.  Optimizer?

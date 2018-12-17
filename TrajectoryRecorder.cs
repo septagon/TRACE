@@ -86,6 +86,8 @@ public class TrajectoryRecorder : MonoBehaviour
                 yield return new WaitForSeconds(1f);
             }
         }
+
+        this.tmp.text = "Done!";
         
         tracer.Save();
     }

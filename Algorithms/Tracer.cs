@@ -2,6 +2,7 @@
 using System.IO;
 using UnityEngine;
 
+// Trajectory Recognition And Comparison Engine
 namespace Trace
 {
     public class Tracer
